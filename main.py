@@ -66,7 +66,7 @@ def detect_anomalies(df):
     plt.xlabel("Sales")
     plt.tight_layout()
     plt.savefig(os.path.join(REPORT_FOLDER, "1. sales_anomalies_boxplot.png"))
-    plt.show()
+
     plt.close()
 
     df_cleaned = df[~((df['Sales'] < lower) | (df['Sales'] > upper))].copy()
@@ -83,7 +83,7 @@ def plot_scatter(df, x_col, y_col, hue_col, title, filename):
     plt.tight_layout()
     path = os.path.join(REPORT_FOLDER, filename)
     plt.savefig(path)
-    plt.show()
+
     plt.close()
     print(f"Scatterplot saved: {path}")
     """
@@ -121,7 +121,7 @@ def run_classification(df, features, target='High_Sales'):
     plt.ylabel("Actual")
     plt.tight_layout()
     plt.savefig(os.path.join(REPORT_FOLDER, "4. classification_confusion_matrix.png"))
-    plt.show()
+
     plt.close()
 
 
@@ -136,7 +136,7 @@ def run_classification(df, features, target='High_Sales'):
     plt.legend()
     plt.tight_layout()
     plt.savefig(os.path.join(REPORT_FOLDER, "5. classification_roc_curve.png"))
-    plt.show()
+
     plt.close()
 
 
@@ -170,7 +170,7 @@ def run_regression(df, features, target='Sales'):
     plt.ylabel("Predicted")
     plt.tight_layout()
     plt.savefig(os.path.join(REPORT_FOLDER, "6. regression_actual_vs_pred.png"))
-    plt.show()
+
     plt.close()
 
 
@@ -188,20 +188,20 @@ def run_forecasting(df):
     plt.ylabel("Sales")
     plt.tight_layout()
     fig1.savefig(os.path.join(REPORT_FOLDER, "7. forecast_prophet.png"))
-    plt.show()
+
     plt.close(fig1)
 
     # Prophet components
     fig2 = model.plot_components(forecast)
     plt.tight_layout()
     fig2.savefig(os.path.join(REPORT_FOLDER, "8. forecast_components.png"))
-    plt.show()
+
     plt.close(fig2)
 
 
 def main():
     ensure_reports_dir()
-    file_path = "F:\\Offline internship\\Mindfluai_Internship\\data\\train.csv"
+    file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "train.csv")
     df = load_fresh_data(file_path)
     df, features = preprocess_data(df)
 

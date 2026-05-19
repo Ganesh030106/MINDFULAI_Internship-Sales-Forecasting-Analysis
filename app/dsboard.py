@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 st.set_page_config(page_title="Superstore Sales Dashboard", layout="wide")
 
@@ -8,6 +9,9 @@ from prophet import Prophet
 import numpy as np
 import plotly.express as px
 
+# Resolve project root (one level up from app/)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 st.markdown("<h1 style='text-align: center; color: white;'>SUPERSTORE SALES DASHBOARD</h1>", unsafe_allow_html=True)
 
 # Rupee formatting utility
@@ -17,7 +21,7 @@ def rupees(x):
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv("F:\\Offline internship\\Mindfluai_Internship\\Cleaned_dataset.csv")
+    df = pd.read_csv(os.path.join(BASE_DIR, "Cleaned_dataset.csv"))
     df['Order Date'] = pd.to_datetime(df['Order Date'], errors='coerce')
     df['Sales'] = pd.to_numeric(df['Sales'], errors='coerce')
     return df.dropna(subset=['Order Date', 'Sales'])
