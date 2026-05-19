@@ -87,7 +87,8 @@ fig.add_trace(go.Scatter(
     mode="lines", name=f"{horizon}d Forecast",
     line=dict(color="#FF6F61", width=2.5),
 ))
-fig.add_vline(x=hist_end, line_dash="dash", line_color="rgba(255,255,255,0.3)",
+fig.add_vline(x=int(hist_end.timestamp() * 1000), line_dash="dash",
+              line_color="rgba(255,255,255,0.3)",
               annotation_text="Forecast Start", annotation_position="top right")
 fig.update_layout(
     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
