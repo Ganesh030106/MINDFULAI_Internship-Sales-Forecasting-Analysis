@@ -1,178 +1,144 @@
-import os
+"""
+app/dsboard.py  — Main entrypoint
+Redirects to the Overview page (Streamlit multi-page apps load this first).
+"""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import streamlit as st
-st.set_page_config(page_title="Superstore Sales Dashboard", layout="wide")
-
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from prophet import Prophet
-import numpy as np
+from utils import load_raw, sidebar_filters, inject_css, section, fmt_k, fmt_inr, PALETTE
 import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
 
-# Resolve project root (one level up from app/)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+st.set_page_config(
+    page_title="MINDFULAI — Sales Intelligence",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+inject_css()
 
-st.markdown("<h1 style='text-align: center; color: white;'>SUPERSTORE SALES DASHBOARD</h1>", unsafe_allow_html=True)
+df_raw  = load_raw()
+df      = sidebar_filters(df_raw)
 
-# Rupee formatting utility
-def rupees(x):
-    return f"₹{x:,.0f}"
+# ── Hero banner ──────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);
+            border-radius:16px;padding:32px 36px;margin-bottom:28px;
+            border:1px solid rgba(108,99,255,0.3)">
+  <h1 style="margin:0;font-size:2rem;font-weight:700;
+             background:linear-gradient(90deg,#6C63FF,#4CC9F0);
+             -webkit-background-clip:text;-webkit-text-fill-color:transparent">
+    📊 MINDFULAI Sales Intelligence
+  </h1>
+  <p style="margin:8px 0 0;color:#aaa;font-size:1rem">
+    Superstore Sales · Forecasting · ML Insights · Data Explorer
+  </p>
+</div>
+""", unsafe_allow_html=True)
 
+# ── KPI Row ──────────────────────────────────────────────────────────────────
+total_sales  = df["Sales"].sum()
+order_count  = df["Order ID"].nunique() if "Order ID" in df else len(df)
+avg_sale     = df["Sales"].mean()
+max_sale     = df["Sales"].max()
+unique_cust  = df["Customer ID"].nunique() if "Customer ID" in df else 0
 
-@st.cache_data
-def load_data():
-    df = pd.read_csv(os.path.join(BASE_DIR, "Cleaned_dataset.csv"))
-    df['Order Date'] = pd.to_datetime(df['Order Date'], errors='coerce')
-    df['Sales'] = pd.to_numeric(df['Sales'], errors='coerce')
-    return df.dropna(subset=['Order Date', 'Sales'])
+# MoM delta
+latest_m = df["Order Date"].max()
+cur  = df[df["Order Date"].dt.to_period("M") == latest_m.to_period("M")]["Sales"].sum()
+prev = df[df["Order Date"].dt.to_period("M") == (latest_m - pd.DateOffset(months=1)).to_period("M")]["Sales"].sum()
+delta_pct = ((cur - prev) / prev * 100) if prev else 0
 
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("💰 Total Sales",    fmt_k(total_sales))
+c2.metric("🛒 Orders",         f"{order_count:,}")
+c3.metric("📦 Avg Sale",       fmt_k(avg_sale))
+c4.metric("🏆 Max Sale",       fmt_k(max_sale))
+c5.metric("👤 Customers",      f"{unique_cust:,}", delta=f"{delta_pct:+.1f}% MoM")
 
-df = load_data()
+st.markdown("<hr>", unsafe_allow_html=True)
 
-# --- Sidebar Filters ---
-regions = df['Region'].unique()
-categories = df['Category'].unique()
-selected_region = st.sidebar.selectbox("Select Region", options=["All"] + sorted(map(str, regions)))
-selected_category = st.sidebar.selectbox("Select Category", options=["All"] + sorted(map(str, categories)))
+# ── Monthly sales sparkline ───────────────────────────────────────────────────
+section("📈 Monthly Sales Trend")
+monthly = (
+    df.groupby(df["Order Date"].dt.to_period("M"))["Sales"]
+    .sum()
+    .reset_index()
+)
+monthly["Order Date"] = monthly["Order Date"].dt.to_timestamp()
 
-filtered_df = df.copy()
-if selected_region != "All":
-    filtered_df = filtered_df[filtered_df['Region'].astype(str) == selected_region]
-if selected_category != "All":
-    filtered_df = filtered_df[filtered_df['Category'].astype(str) == selected_category]
+fig_spark = px.area(
+    monthly, x="Order Date", y="Sales",
+    labels={"Sales": "Sales (₹)", "Order Date": "Month"},
+    color_discrete_sequence=["#6C63FF"],
+)
+fig_spark.update_traces(
+    fill="tozeroy",
+    fillcolor="rgba(108,99,255,0.15)",
+    line=dict(width=2.5),
+)
+fig_spark.update_layout(
+    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0),
+    hovermode="x unified", height=280,
+)
+st.plotly_chart(fig_spark, use_container_width=True)
 
-# --- KPI Cards ---
-col1, col2, col3, col4 = st.columns(4)
-total_sales = filtered_df['Sales'].sum()
-order_count = filtered_df['Order ID'].nunique() if 'Order ID' in filtered_df else len(filtered_df)
-avg_sales = filtered_df['Sales'].mean()
-max_sales = filtered_df['Sales'].max()
+# ── Two-column: Category & Region ───────────────────────────────────────────
+col_a, col_b = st.columns(2)
 
-col1.metric("Total Sales", rupees(total_sales))
-col2.metric("Order Count", f"{order_count:,}")
-col3.metric("Average Sale", rupees(avg_sales))
-col4.metric("Max Sale", rupees(max_sales))
-
-st.markdown("---")
-
-# --- Sales Time Series ---
-st.subheader("📈 Sales Over Time")
-df_grouped = filtered_df.groupby('Order Date')['Sales'].sum().reset_index().rename(columns={'Order Date': 'ds', 'Sales': 'y'})
-st.line_chart(df_grouped.set_index("ds")["y"])
-
-# --- Prophet Forecast ---
-if len(df_grouped) > 30:
-    st.subheader("🔮 30-Day Sales Forecast")
-    model = Prophet(yearly_seasonality=True, daily_seasonality=False)
-    model.fit(df_grouped)
-    future = model.make_future_dataframe(periods=30)
-    forecast = model.predict(future)
-    fig1 = model.plot(forecast)
-    plt.title("Forecast: Next 30 Days (₹)")
-    st.pyplot(fig1)
-else:
-    st.info("Not enough data for forecasting with current filter.")
-
-# --- Monthly Sales Trend ---
-st.subheader("📅 Monthly Sales Trend")
-monthly_sales = filtered_df.resample("ME", on="Order Date")["Sales"].sum().reset_index()
-fig2, ax2 = plt.subplots()
-ax2.plot(monthly_sales["Order Date"], monthly_sales["Sales"], marker='o', color='teal')
-ax2.set_xlabel("Month")
-ax2.set_ylabel("Sales (₹)")
-ax2.set_title("Monthly Sales Over Time")
-st.pyplot(fig2)
-
-# --- Sales by Category ---
-st.subheader("Sales by Category")
-category_sales = filtered_df.groupby("Category")["Sales"].sum().sort_values()
-fig3, ax3 = plt.subplots()
-category_sales.plot(kind='barh', ax=ax3, color="orange")
-ax3.set_xlabel("Sales (₹)")
-ax3.set_title("Total Sales by Category")
-st.pyplot(fig3)
-
-# --- Sales by Region ---
-st.subheader("Sales by Region")
-region_sales = filtered_df.groupby("Region")["Sales"].sum().sort_values()
-fig4, ax4 = plt.subplots()
-region_sales.plot(kind='barh', ax=ax4, color="royalblue")
-ax4.set_xlabel("Sales (₹)")
-ax4.set_title("Total Sales by Region")
-st.pyplot(fig4)
-
-# --- Top 10 Products by Sales ---
-if "Product Name" in filtered_df.columns:
-    st.subheader("🏆 Top 10 Products by Sales")
-    top_products = (
-        filtered_df.groupby("Product Name")["Sales"].sum().sort_values(ascending=False).head(10)
+with col_a:
+    section("📦 Sales by Category")
+    cat_df = df.groupby("Category")["Sales"].sum().reset_index().sort_values("Sales")
+    fig_cat = px.bar(
+        cat_df, x="Sales", y="Category", orientation="h",
+        color="Sales", color_continuous_scale="Purples",
+        labels={"Sales": "Sales (₹)"},
     )
-    fig5, ax5 = plt.subplots()
-    top_products.plot(kind="bar", ax=ax5, color="green")
-    ax5.set_ylabel("Sales (₹)")
-    ax5.set_title("Top 10 Products by Sales")
-    st.pyplot(fig5)
+    fig_cat.update_layout(
+        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", coloraxis_showscale=False,
+        margin=dict(l=0, r=0, t=0, b=0), height=260,
+    )
+    st.plotly_chart(fig_cat, use_container_width=True)
 
-# --- Sales Distribution Histogram ---
-st.subheader("Sales Value Distribution")
-fig6, ax6 = plt.subplots()
-filtered_df["Sales"].plot(kind="hist", bins=30, alpha=0.7, color="navy", edgecolor="white", ax=ax6)
-ax6.set_xlabel("Sales (₹)")
-ax6.set_title("Sales Distribution")
-st.pyplot(fig6)
+with col_b:
+    section("🌐 Sales by Region")
+    reg_df = df.groupby("Region")["Sales"].sum().reset_index()
+    fig_reg = px.pie(
+        reg_df, names="Region", values="Sales",
+        color_discrete_sequence=PALETTE, hole=0.55,
+    )
+    fig_reg.update_traces(textinfo="percent+label")
+    fig_reg.update_layout(
+        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=0, r=0, t=0, b=0), height=260,
+        showlegend=False,
+    )
+    st.plotly_chart(fig_reg, use_container_width=True)
 
+# ── Quarterly heatmap ─────────────────────────────────────────────────────────
+section("🗓 Quarterly Sales Heatmap")
+heat = df.groupby(["Year", "Quarter"])["Sales"].sum().reset_index()
+fig_heat = px.density_heatmap(
+    heat, x="Quarter", y="Year", z="Sales",
+    color_continuous_scale="Viridis", text_auto=".2s",
+    labels={"Sales": "Sales (₹)"},
+)
+fig_heat.update_layout(
+    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=0, b=0), height=260,
+)
+st.plotly_chart(fig_heat, use_container_width=True)
 
-# --- Sunburst Chart: Category > Sub-Category (Requires Plotly) ---
-if "Sub-Category" in filtered_df.columns:
-    st.subheader("Category & Sub-Category Sales Breakdown")
-    sunburst_df = filtered_df.groupby(['Category', 'Sub-Category'])['Sales'].sum().reset_index()
-    fig8 = px.sunburst(sunburst_df, path=['Category', 'Sub-Category'], values='Sales',
-                      color='Sales', color_continuous_scale='Blues',
-                      labels={'Sales':'Sales (₹)'})
-    st.plotly_chart(fig8, use_container_width=True)
-
-# --- Customer Lifetime Value Histogram ---
-if "Customer ID" in filtered_df.columns:
-    st.subheader("Customer Lifetime Value (LTV) Distribution")
-    clv = filtered_df.groupby('Customer ID')['Sales'].sum()
-    fig9, ax9 = plt.subplots()
-    sns.histplot(clv, bins=30, kde=True, ax=ax9, color='teal')
-    ax9.set_xlabel('Total Sales per Customer (₹)')
-    ax9.set_title('Customer Lifetime Value Distribution')
-    st.pyplot(fig9)
-
-# --- Month-over-Month Sales Delta ---
-this_month = filtered_df[filtered_df['Order Date'].dt.month == filtered_df['Order Date'].max().month]
-last_month = filtered_df[filtered_df['Order Date'].dt.month == (filtered_df['Order Date'].max().month - 1)]
-this_sales = this_month['Sales'].sum()
-last_sales = last_month['Sales'].sum() if not last_month.empty else 0
-delta = this_sales - last_sales
-st.metric("Sales This Month", rupees(this_sales), delta=(f"{rupees(abs(delta))} {'↑' if delta > 0 else '↓'}"))
-
-if 'Ship Mode' in filtered_df.columns:
-    st.subheader("🚚 Sales Distribution by Ship Mode")
-    shipmode_sales = filtered_df.groupby('Ship Mode')['Sales'].sum()
-    fig_ship, ax_ship = plt.subplots()
-    ax_ship.pie(shipmode_sales, labels=shipmode_sales.index, autopct=lambda p: f"{p:.1f}%", startangle=140, colors=sns.color_palette("Set2"))
-    ax_ship.axis('equal')
-    st.pyplot(fig_ship)
-
-if 'Sub-Category' in filtered_df.columns:
-    st.subheader("📦 Sales Distribution per Sub-Category")
-    fig_box, ax_box = plt.subplots(figsize=(10,5))
-    sns.boxplot(data=filtered_df,x="Sub-Category",y="Sales",hue="Sub-Category",ax=ax_box,palette="Set3",legend=False)
-    ax_box.set_xlabel("Sub-Category")
-    ax_box.set_ylabel("Sales (₹)")
-    ax_box.set_title("Sub-Category Sales Boxplot")
-    plt.xticks(rotation=45)
-    st.pyplot(fig_box)
-
-st.subheader("📊 Cumulative Sales Over Time")
-cum_sales = df_grouped.copy()
-cum_sales['Cumulative Sales'] = cum_sales['y'].cumsum()
-fig_cum, ax_cum = plt.subplots()
-ax_cum.plot(cum_sales['ds'], cum_sales['Cumulative Sales'], color='indigo')
-ax_cum.set_xlabel("Date")
-ax_cum.set_ylabel("Cumulative Sales (₹)")
-ax_cum.set_title("Cumulative Sales Growth")
-st.pyplot(fig_cum)
+# ── Navigate hint ────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="background:rgba(108,99,255,0.08);border:1px solid rgba(108,99,255,0.2);
+            border-radius:12px;padding:16px 20px;margin-top:12px;text-align:center">
+  <span style="color:#aaa">Use the <b style="color:#6C63FF">sidebar pages</b> to explore
+  Sales Analytics, Forecasting, ML Insights, and the Data Explorer →</span>
+</div>
+""", unsafe_allow_html=True)
